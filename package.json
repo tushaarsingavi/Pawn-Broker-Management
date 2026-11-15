@@ -1,0 +1,16 @@
+{
+  "name": "gold-loan-manager",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Local gold loan / pawn broker management system (Express + SQLite)",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "test": "node --no-warnings test/interest.test.js",
+    "reset-password": "node --no-warnings scripts/reset-password.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2"
+  }
+}

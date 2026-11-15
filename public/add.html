@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Add Entry - Gold Loan Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="hdr"></header>
+
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="walkin">Normal (Walk-in) Customer + Bill</div>
+    <div class="tab" data-tab="regreg">Register Regular Customer</div>
+    <div class="tab" data-tab="regbill">Add Bill for Regular Customer</div>
+  </div>
+  <div id="msg" class="msg"></div>
+
+  <section id="tab-walkin" class="card">
+    <h2>Normal customer: details, item and bill</h2>
+    <form id="formWalkin">
+      <h3>Customer</h3>
+      <div class="grid">
+        <div><label>Name *</label><input name="name" required maxlength="100"></div>
+        <div><label>Phone *</label><input name="phone" required inputmode="tel" maxlength="30"></div>
+        <div><label>ID proof (Aadhaar / Voter ID etc.)</label><input name="id_proof" maxlength="100"></div>
+        <div class="full"><label>Address</label><input name="address" maxlength="300"></div>
+      </div>
+      <div class="loanFields"></div>
+      <p><button class="btn" type="submit">Save customer &amp; bill</button></p>
+    </form>
+  </section>
+
+  <section id="tab-regreg" class="card hidden">
+    <h2>Register a regular customer (one time)</h2>
+    <form id="formRegular">
+      <div class="grid">
+        <div><label>Name *</label><input name="name" required maxlength="100"></div>
+        <div><label>Phone *</label><input name="phone" required inputmode="tel" maxlength="30"></div>
+        <div><label>ID proof (Aadhaar / Voter ID etc.)</label><input name="id_proof" maxlength="100"></div>
+        <div><label>Reference / Notes</label><input name="notes" maxlength="300"></div>
+        <div class="full"><label>Address</label><input name="address" maxlength="300"></div>
+      </div>
+      <p><button class="btn" type="submit">Register customer</button></p>
+    </form>
+  </section>
+
+  <section id="tab-regbill" class="card hidden">
+    <h2>Add a new bill for a regular customer</h2>
+    <form id="formRegBill">
+      <div class="grid">
+        <div class="full">
+          <label>Select regular customer * (type name or phone)</label>
+          <input id="regPick" list="regList" placeholder="Start typing..." autocomplete="off" required>
+          <datalist id="regList"></datalist>
+        </div>
+      </div>
+      <div class="loanFields"></div>
+      <p><button class="btn" type="submit">Save bill</button></p>
+    </form>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script>
+let settings = {};
+let regulars = [];
+
+const LOAN_FIELDS = () => `
+  <h3>Bill &amp; item</h3>
+  <div class="grid">
+    <div><label>Bill No *</label><input name="bill_no" required maxlength="30"></div>
+    <div><label>Date *</label><input name="date" type="date" required value="${today()}"></div>
+    <div class="full"><label>Item description * (e.g. Gold chain, 2 bangles)</label><input name="item" required maxlength="200"></div>
+    <div><label>Weight (grams) *</label><input name="weight" type="number" step="0.01" min="0.01" required></div>
+    <div><label>Purity</label>
+      <select name="purity"><option>22K</option><option>24K</option><option>20K</option><option>18K</option><option>Other</option></select></div>
+    <div><label>Loan amount (₹) *</label><input name="amount" type="number" step="0.01" min="1" required></div>
+    <div><label>Interest (% per month) *</label><input name="rate" type="number" step="0.01" min="0.01" required value="${esc(settings.default_rate || 2)}"></div>
+    <div class="full"><label>Remarks</label><input name="remarks" maxlength="300"></div>
+    <div class="full"><label style="display:flex;gap:8px;align-items:center;color:inherit">
+      <input type="checkbox" name="deduct" style="width:auto" ${settings.deduct_upfront === '0' ? '' : 'checked'}>
+      Deduct one month's interest up front</label></div>
+  </div>
+  <div class="preview" data-preview></div>`;
+
+function wireLoanForm(form) {
+  const upd = () => {
+    const amt = parseFloat(form.amount.value), rate = parseFloat(form.rate.value);
+    const box = form.querySelector('[data-preview]');
+    if (!(amt > 0) || !(rate > 0)) { box.textContent = 'Enter the loan amount and rate to see what the customer receives.'; return; }
+    const up = form.deduct.checked ? Math.round(amt * rate) / 100 : 0;
+    box.innerHTML = up
+      ? `One month's interest deducted: <b>${inr(up)}</b> &nbsp;→&nbsp; Customer receives: <b>${inr(Math.round((amt - up) * 100) / 100)}</b>`
+      : `No up-front deduction. Customer receives: <b>${inr(amt)}</b>`;
+  };
+  ['amount', 'rate'].forEach(n => form[n].addEventListener('input', upd));
+  form.deduct.addEventListener('change', upd);
+  upd();
+}
+
+async function freshLoanFields(form) {
+  form.querySelector('.loanFields').innerHTML = LOAN_FIELDS();
+  const { next } = await api('/api/next-bill');
+  if (next) form.bill_no.value = next;
+  wireLoanForm(form);
+}
+
+const msg = $('msg');
+function show(html, ok) {
+  msg.innerHTML = html;
+  msg.className = 'msg ' + (ok ? 'ok' : 'err');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function loanPayload(f) {
+  return {
+    bill_no: f.bill_no.value, date: f.date.value, item: f.item.value, weight: f.weight.value,
+    purity: f.purity.value, amount: f.amount.value, rate: f.rate.value, remarks: f.remarks.value,
+    deduct_upfront: f.deduct.checked,
+  };
+}
+function savedMsg(name, r, billNo) {
+  return `Saved bill <b>${esc(billNo)}</b> for ${esc(name)}. Customer receives <b>${inr(r.netPaid)}</b>` +
+    (r.upfront ? ` (${inr(r.upfront)} interest deducted)` : '') +
+    ` &nbsp; <a class="link" target="_blank" href="print.html?type=loan&id=${r.id}">Print bill</a> · <a class="link" href="loan.html?id=${r.id}">Open bill</a>`;
+}
+
+async function refreshRegulars() {
+  regulars = await api('/api/customers/regular');
+  $('regList').innerHTML = regulars.map(c => `<option value="${esc(c.name + ' - ' + c.phone)}"></option>`).join('');
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+  ['walkin', 'regreg', 'regbill'].forEach(n => $('tab-' + n).classList.toggle('hidden', n !== t.dataset.tab));
+  msg.className = 'msg';
+  if (t.dataset.tab === 'regbill') refreshRegulars();
+});
+
+$('formWalkin').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    const r = await api('/api/loans', 'POST', {
+      customer: { name: f.name.value, phone: f.phone.value, id_proof: f.id_proof.value, address: f.address.value },
+      ...loanPayload(f),
+    });
+    show(savedMsg(f.name.value, r, f.bill_no.value), true);
+    f.reset();
+    await freshLoanFields(f);
+  } catch (err) { show(esc(err.message), false); }
+};
+
+$('formRegular').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api('/api/customers', 'POST', {
+      type: 'regular', name: f.name.value, phone: f.phone.value,
+      id_proof: f.id_proof.value, address: f.address.value, notes: f.notes.value,
+    });
+    show(`${esc(f.name.value)} registered as a regular customer. Now add bills from the third tab.`, true);
+    f.reset();
+  } catch (err) { show(esc(err.message), false); }
+};
+
+$('formRegBill').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const label = $('regPick').value.trim();
+  const c = regulars.find(c => c.name + ' - ' + c.phone === label);
+  if (!c) return show('Please pick a registered regular customer from the suggestions.', false);
+  try {
+    const r = await api('/api/loans', 'POST', { customerId: c.id, ...loanPayload(f) });
+    show(savedMsg(c.name, r, f.bill_no.value), true);
+    f.reset();
+    $('regPick').value = '';
+    await freshLoanFields(f);
+  } catch (err) { show(esc(err.message), false); }
+};
+
+(async () => {
+  if (!(await initPage('add'))) return;
+  settings = await api('/api/settings');
+  await freshLoanFields($('formWalkin'));
+  await freshLoanFields($('formRegBill'));
+  await refreshRegulars();
+})();
+</script>
+</body>
+</html>

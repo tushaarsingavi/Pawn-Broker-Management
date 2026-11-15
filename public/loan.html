@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bill - Gold Loan Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="hdr"></header>
+
+<main>
+  <p><a class="link" href="search.html">&larr; Back to Search &amp; View</a></p>
+  <div id="content"><div class="empty">Loading...</div></div>
+</main>
+
+<script src="app.js"></script>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+
+async function load() {
+  let d;
+  try { d = await api('/api/loans/' + encodeURIComponent(id)); }
+  catch (err) { $('content').innerHTML = `<div class="card empty">${esc(err.message)}</div>`; return; }
+  const { loan: l, payments, calc: c } = d;
+  const active = l.status === 'Active';
+  const netPaid = l.amount - l.upfront;
+
+  const advance = c.interestDue < 0;
+  $('content').innerHTML = `
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Bill ${esc(l.bill_no)} &nbsp;${statusBadge(l.status)}</h2>
+      <div class="row">
+        ${printLink('loan', l.id, 'Print bill')}
+        ${printLink('statement', l.id, 'Print statement')}
+      </div>
+    </div>
+    <div class="kv" style="margin-top:14px">
+      <div><span>Customer</span><a class="link" href="search.html">${esc(l.customer_name)}</a> ${typeBadge(l.customer_type)}</div>
+      <div><span>Phone</span>${esc(l.customer_phone)}</div>
+      <div><span>Bill date</span>${fmtDate(l.date)}</div>
+      <div><span>Item</span>${esc(l.item)}</div>
+      <div><span>Weight / purity</span>${l.weight} g · ${esc(l.purity)}</div>
+      <div><span>Loan amount</span>${inr(l.amount)}</div>
+      <div><span>Interest rate</span>${l.rate}% per month</div>
+      <div><span>Up-front interest deducted</span>${inr(l.upfront)}</div>
+      <div><span>Amount handed to customer</span>${inr(netPaid)}</div>
+      ${l.released_date ? `<div><span>Released on</span>${fmtDate(l.released_date)}</div>` : ''}
+      ${l.remarks ? `<div style="grid-column:1/-1"><span>Remarks</span>${esc(l.remarks)}</div>` : ''}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>${active ? 'Dues as on today (' + fmtDate(c.asOf) + ')' : 'Closing position (' + fmtDate(c.asOf) + ')'}</h2>
+    <div class="kpis">
+      <div class="kpi"><span>Months charged</span><b>${c.monthsCharged}</b></div>
+      <div class="kpi"><span>Current principal${c.capitalizations.length ? ' (incl. added interest)' : ''}</span><b>${inr(c.principal)}</b></div>
+      <div class="kpi"><span>Interest accrued (all months)</span><b>${inr(c.interestAccrued)}</b></div>
+      <div class="kpi"><span>Interest paid (incl. up-front)</span><b>${inr(c.interestPaid)}</b></div>
+      <div class="kpi"><span>${advance ? 'Interest paid in advance' : 'Interest due'}</span><b>${inr(Math.abs(c.interestDue))}</b></div>
+      <div class="kpi total"><span>${active ? 'Total to collect today' : 'Balance'}</span><b>${inr(c.totalDue)}</b></div>
+    </div>
+    ${c.capitalizations.map(x => `<p class="note">After month ${x.month}, unpaid interest of ${inr(x.amount)} was added to the principal.</p>`).join('')}
+    <details><summary>Month-by-month interest</summary>
+      <div class="tablewrap"><table><thead><tr><th>Month</th><th>Period</th><th class="right">Principal</th><th class="right">Interest</th><th></th></tr></thead><tbody>
+      ${c.ledger.map(r => `<tr><td>${r.month}</td><td>${fmtDate(r.from)} – ${fmtDate(r.to)}</td>
+        <td class="right mono">${inr(r.principalAtStart)}</td><td class="right mono">${inr(r.interest)}</td>
+        <td>${r.capitalized ? `<span class="pill">${inr(r.capitalized)} added to principal</span>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Payments</h2>
+    ${l.upfront > 0 ? `<p class="note">${inr(l.upfront)} one-month interest was deducted up front on ${fmtDate(l.date)} and is already counted above.</p>` : ''}
+    ${payments.length ? `<div class="tablewrap"><table><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th><th></th></tr></thead><tbody>` +
+      payments.map(p => `<tr><td>${fmtDate(p.date)}</td>
+        <td>${p.kind === 'interest' ? 'Interest' : 'Principal'}</td>
+        <td class="right mono">${inr(p.amount)}</td><td>${esc(p.note)}</td>
+        <td class="row">${printLink('receipt', p.id, 'Receipt')}
+          ${active && !p.is_settlement ? `<button class="btn small danger-sec" data-del="${p.id}">Delete</button>` : ''}</td></tr>`).join('') +
+      '</tbody></table></div>' : '<div class="empty">No part payments yet.</div>'}
+
+    ${active ? `
+    <h3>Add a payment</h3>
+    <form id="payForm">
+      <div class="grid">
+        <div><label>Date *</label><input name="date" type="date" required value="${today()}" min="${l.date}"></div>
+        <div><label>Pay towards *</label>
+          <select name="kind"><option value="interest">Interest</option><option value="principal">Principal</option></select></div>
+        <div><label>Amount (₹) *</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <div><label>Note</label><input name="note" maxlength="200"></div>
+      </div>
+      <p class="row"><button class="btn" type="submit">Save payment</button>
+        <span class="note">Interest due today is ${inr(Math.max(0, c.interestDue))}; principal is ${inr(c.principal)}.</span></p>
+    </form>` : ''}
+  </div>
+
+  <div class="card">
+    <h2>${active ? 'Release item' : 'Reopen bill'}</h2>
+    ${active ? `
+      <p class="note">Releasing records the final payment of <b>${inr(c.totalDue)}</b> (interest ${inr(Math.max(0, c.interestDue))} + principal ${inr(c.principal)}) as on the date you choose and marks the item as released.</p>
+      <div class="row">
+        <div><label>Release date</label><input id="relDate" type="date" value="${today()}" min="${l.date}"></div>
+        <button class="btn" id="btnRelease" style="margin-top:18px">Release item</button>
+      </div>` : `
+      <p class="note">If the item was released by mistake, you can reopen the bill. The final settlement entries will be removed.</p>
+      <button class="btn sec" id="btnReopen">Reopen bill</button>`}
+  </div>`;
+
+  const f = $('payForm');
+  if (f) f.onsubmit = async e => {
+    e.preventDefault();
+    try {
+      const r = await api(`/api/loans/${l.id}/payments`, 'POST', Object.fromEntries(new FormData(f)));
+      toast('Payment saved');
+      await load();
+      if (confirm('Payment saved. Open the receipt to print?')) window.open('print.html?type=receipt&id=' + r.id, '_blank');
+    } catch (err) { toast(err.message, true); }
+  };
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Delete this payment?')) return;
+    try { await api('/api/payments/' + b.dataset.del, 'DELETE'); toast('Payment deleted'); load(); }
+    catch (err) { toast(err.message, true); }
+  });
+  const rel = $('btnRelease');
+  if (rel) rel.onclick = async () => {
+    const date = $('relDate').value;
+    let due;
+    try { due = (await api(`/api/loans/${l.id}?asOf=${date}`)).calc; } catch (err) { return toast(err.message, true); }
+    if (!confirm(`Release bill ${l.bill_no} on ${fmtDate(date)}?\n\nCollect: ${inr(due.totalDue)}\n(Interest ${inr(Math.max(0, due.interestDue))} + Principal ${inr(due.principal)})`)) return;
+    try { await api(`/api/loans/${l.id}/release`, 'POST', { date }); toast('Item released'); load(); }
+    catch (err) { toast(err.message, true); }
+  };
+  const reo = $('btnReopen');
+  if (reo) reo.onclick = async () => {
+    if (!confirm('Reopen this bill?')) return;
+    try { await api(`/api/loans/${l.id}/reopen`, 'POST'); toast('Bill reopened'); load(); }
+    catch (err) { toast(err.message, true); }
+  };
+}
+
+(async () => { if (await initPage('search')) load(); })();
+</script>
+</body>
+</html>

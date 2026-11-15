@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Search &amp; View - Gold Loan Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="hdr"></header>
+
+<main>
+  <div class="stats" id="stats"></div>
+
+  <div class="card">
+    <div class="filters">
+      <div><label>Search (name, phone, bill no, item)</label><input id="q" placeholder="Type to search..." autofocus></div>
+      <div><label>Item status</label>
+        <select id="fStatus"><option value="">All</option><option value="Active">With us (Active)</option><option value="Released">Released</option></select></div>
+      <div><label>Customer type</label>
+        <select id="fType"><option value="">All</option><option value="regular">Regular</option><option value="normal">Normal</option></select></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" data-view="bills">Bills</div>
+      <div class="tab" data-view="customers">Customers</div>
+    </div>
+    <div class="tablewrap" id="result"></div>
+  </div>
+</main>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="app.js"></script>
+<script>
+let view = 'bills';
+
+async function renderStats() {
+  const s = await api('/api/stats');
+  $('stats').innerHTML = `
+    <div class="stat"><b>${s.active}</b><span>Items currently with us</span></div>
+    <div class="stat"><b>${inr(s.principal)}</b><span>Principal outstanding</span></div>
+    <div class="stat"><b>${inr(s.interestDue)}</b><span>Interest due (till today)</span></div>
+    <div class="stat"><b>${inr(s.totalDue)}</b><span>Total to collect today</span></div>
+    <div class="stat"><b>${s.released}</b><span>Items released</span></div>
+    <div class="stat"><b>${s.regular}</b><span>Regular customers (of ${s.customers})</span></div>`;
+}
+
+async function render() {
+  const p = new URLSearchParams({ q: $('q').value.trim(), status: $('fStatus').value, type: $('fType').value });
+  try {
+    if (view === 'bills') {
+      const rows = await api('/api/loans?' + p);
+      $('result').innerHTML = rows.length ? `<table><thead><tr>
+        <th>Bill No</th><th>Date</th><th>Customer</th><th>Item</th><th class="right">Loan</th><th class="right">Due today</th><th>Status</th><th></th></tr></thead><tbody>` +
+        rows.map(l => `<tr>
+          <td><b>${esc(l.bill_no)}</b></td>
+          <td>${fmtDate(l.date)}</td>
+          <td><a class="link" data-cust="${l.customer_id}">${esc(l.customer_name)}</a> ${typeBadge(l.customer_type)}<br><small>${esc(l.customer_phone)}</small></td>
+          <td>${esc(l.item)}<br><small>${l.weight} g · ${esc(l.purity)}</small></td>
+          <td class="right mono">${inr(l.amount)}<br><small>${l.rate}%/mo</small></td>
+          <td class="right mono">${l.status === 'Active'
+            ? `<b>${inr(l.totalDue)}</b><br><small>${l.monthsCharged} mo${l.monthsCharged > 12 ? ' · compounded' : ''}</small>`
+            : '<small>settled</small>'}</td>
+          <td>${statusBadge(l.status)}${l.released_date ? '<br><small>' + fmtDate(l.released_date) + '</small>' : ''}</td>
+          <td><a class="btn small" style="text-decoration:none;display:inline-block" href="loan.html?id=${l.id}">Open</a></td>
+        </tr>`).join('') + '</tbody></table>'
+        : '<div class="empty">No bills found.</div>';
+    } else {
+      const rows = await api('/api/customers?' + p);
+      $('result').innerHTML = rows.length ? `<table><thead><tr>
+        <th>Name</th><th>Phone</th><th>Type</th><th>Total bills</th><th>Items with us</th><th class="right">Due today</th></tr></thead><tbody>` +
+        rows.map(c => `<tr>
+          <td><a class="link" data-cust="${c.id}">${esc(c.name)}</a></td>
+          <td>${esc(c.phone)}</td><td>${typeBadge(c.type)}</td>
+          <td>${c.bills}</td><td>${c.active}</td><td class="right mono">${inr(c.outstanding)}</td></tr>`).join('') + '</tbody></table>'
+        : '<div class="empty">No customers found.</div>';
+    }
+  } catch (err) { $('result').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+
+async function showCustomer(id, editing) {
+  const { customer: c, loans } = await api('/api/customers/' + id);
+  const head = editing ? `
+    <form id="editForm">
+      <div class="grid">
+        <div><label>Name</label><input name="name" required value="${esc(c.name)}" maxlength="100"></div>
+        <div><label>Phone</label><input name="phone" required value="${esc(c.phone)}" maxlength="30"></div>
+        <div><label>ID proof</label><input name="id_proof" value="${esc(c.id_proof)}" maxlength="100"></div>
+        <div><label>Type</label><select name="type"><option value="regular" ${c.type === 'regular' ? 'selected' : ''}>Regular</option><option value="normal" ${c.type === 'normal' ? 'selected' : ''}>Normal</option></select></div>
+        <div class="full"><label>Address</label><input name="address" value="${esc(c.address)}" maxlength="300"></div>
+        <div class="full"><label>Notes</label><input name="notes" value="${esc(c.notes)}" maxlength="300"></div>
+      </div>
+      <p class="row"><button class="btn small" type="submit">Save</button><button class="btn small sec" type="button" data-edit="0" data-id="${c.id}">Cancel</button></p>
+    </form>` : `
+    <div class="kv">
+      <div><span>Phone</span>${esc(c.phone) || '-'}</div>
+      <div><span>ID proof</span>${esc(c.id_proof) || '-'}</div>
+      <div><span>Customer since</span>${fmtDate(c.created_at)}</div>
+      <div style="grid-column:1/-1"><span>Address</span>${esc(c.address) || '-'}</div>
+      ${c.notes ? `<div style="grid-column:1/-1"><span>Notes</span>${esc(c.notes)}</div>` : ''}
+    </div>
+    <p><button class="btn small sec" data-edit="1" data-id="${c.id}">Edit customer</button></p>`;
+  $('modal').innerHTML = `
+    <div class="modal-head"><h2 style="margin:0">${esc(c.name)} ${typeBadge(c.type)}</h2>
+      <button class="btn small sec" data-close>Close</button></div>
+    ${head}
+    <h3>Bills (${loans.length})</h3>
+    ${loans.length ? `<div class="tablewrap"><table><thead><tr><th>Bill</th><th>Date</th><th>Item</th><th class="right">Loan</th><th class="right">Due today</th><th>Status</th><th></th></tr></thead><tbody>` +
+      loans.map(l => `<tr><td><b>${esc(l.bill_no)}</b></td><td>${fmtDate(l.date)}</td>
+        <td>${esc(l.item)}<br><small>${l.weight} g · ${esc(l.purity)}</small></td>
+        <td class="right mono">${inr(l.amount)}</td>
+        <td class="right mono">${l.status === 'Active' ? '<b>' + inr(l.totalDue) + '</b>' : '<small>settled</small>'}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td><a class="btn small" style="text-decoration:none;display:inline-block" href="loan.html?id=${l.id}">Open</a></td></tr>`).join('') +
+      '</tbody></table></div>' : '<div class="empty">No bills yet.</div>'}`;
+  $('modalBg').classList.add('show');
+  const f = $('editForm');
+  if (f) f.onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await api('/api/customers/' + c.id, 'PUT', Object.fromEntries(new FormData(f)));
+      toast('Customer updated');
+      await showCustomer(c.id, false); render(); renderStats();
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.cust) showCustomer(t.dataset.cust, false);
+  else if (t.dataset.edit !== undefined) showCustomer(t.dataset.id, t.dataset.edit === '1');
+  else if (t.dataset.close !== undefined || t.id === 'modalBg') $('modalBg').classList.remove('show');
+  else if (t.dataset.view) {
+    view = t.dataset.view;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    render();
+  }
+});
+const rerender = debounce(render);
+$('q').addEventListener('input', rerender);
+['fStatus', 'fType'].forEach(id => $(id).addEventListener('input', render));
+
+(async () => {
+  if (!(await initPage('search'))) return;
+  renderStats();
+  render();
+})();
+</script>
+</body>
+</html>

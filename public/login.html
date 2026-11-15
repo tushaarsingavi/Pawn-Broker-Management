@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login - Gold Loan Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Gold Loan Manager</h1></header>
+<main>
+  <div class="card login-box">
+    <h2 id="title">Log in</h2>
+    <p class="note" id="sub"></p>
+    <div id="msg" class="msg"></div>
+    <form id="form">
+      <div style="margin-bottom:12px"><label>Username</label><input id="username" required autocomplete="username" autofocus></div>
+      <div style="margin-bottom:12px"><label>Password</label><input id="password" type="password" required autocomplete="current-password"></div>
+      <div id="confirmWrap" class="hidden" style="margin-bottom:12px"><label>Confirm password</label><input id="confirm" type="password" autocomplete="new-password"></div>
+      <button class="btn" id="go" style="width:100%">Log in</button>
+    </form>
+  </div>
+</main>
+<script src="app.js"></script>
+<script>
+let setup = false;
+function showErr(t) { const m = $('msg'); m.textContent = t; m.className = 'msg err'; }
+
+(async () => {
+  const st = await fetch('/api/auth/status').then(r => r.json());
+  if (st.loggedIn) return (location.href = '/search.html');
+  if (st.setupRequired) {
+    setup = true;
+    $('title').textContent = 'First-time setup';
+    $('sub').textContent = 'Create the owner account. You will use it to log in every time. Use at least 8 characters for the password and remember it.';
+    $('confirmWrap').classList.remove('hidden');
+    $('confirm').required = true;
+    $('password').autocomplete = 'new-password';
+    $('go').textContent = 'Create account & start';
+  }
+})();
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const username = $('username').value.trim(), password = $('password').value;
+  try {
+    if (setup) {
+      if (password !== $('confirm').value) return showErr('The two passwords do not match.');
+      await api('/api/auth/setup', 'POST', { username, password });
+    } else {
+      await api('/api/auth/login', 'POST', { username, password });
+    }
+    location.href = setup ? '/settings.html' : '/search.html';
+  } catch (err) { showErr(err.message); }
+};
+</script>
+</body>
+</html>
